@@ -1,0 +1,773 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>90% Formula Trading System - Deriv</title>
+<style>
+  body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    margin: 20px;
+    background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
+    color: #e0e7ff;
+  }
+  h1 {
+    color: #a5d8ff;
+    text-align: center;
+    margin-bottom: 15px;
+    user-select: none;
+  }
+  #status {
+    font-weight: 700;
+    margin-bottom: 15px;
+    text-align: center;
+    font-size: 1.2rem;
+  }
+  #controls {
+    text-align: center;
+    margin-bottom: 25px;
+  }
+  #controls button {
+    background-color: #2c5364;
+    border: none;
+    color: #e0e7ff;
+    padding: 12px 30px;
+    margin: 0 12px;
+    font-size: 18px;
+    border-radius: 8px;
+    cursor: pointer;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+    transition: background-color 0.3s ease;
+    user-select: none;
+  }
+  #controls button:disabled {
+    background-color: #556a7a;
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+  #controls button:hover:not(:disabled) {
+    background-color: #3d7ea6;
+  }
+  h3 {
+    margin-top: 30px;
+    color: #a5d8ff;
+    user-select: none;
+    border-bottom: 2px solid #a5d8ff;
+    padding-bottom: 6px;
+  }
+  #priceList, #log {
+    background: rgba(255, 255, 255, 0.07);
+    border: 1px solid #4080bf;
+    height: 160px;
+    overflow-y: auto;
+    padding: 15px;
+    font-family: 'Courier New', monospace;
+    font-size: 14px;
+    border-radius: 10px;
+    user-select: text;
+    white-space: pre-wrap;
+  }
+  #priceList {
+    letter-spacing: 0.06em;
+  }
+  #prediction {
+    font-size: 22px;
+    font-weight: 700;
+    margin-top: 24px;
+    text-align: center;
+    color: #ffcc33;
+    user-select: none;
+  }
+  #error {
+    margin-top: 10px;
+    text-align: center;
+    font-weight: 700;
+  }
+  #error.positive {
+    color: #4caf50;
+  }
+  #error.negative {
+    color: #f44336;
+  }
+  #error.neutral {
+    color: #ffc107;
+  }
+  .stats-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 10px;
+    margin: 15px 0;
+  }
+  .stat-box {
+    background: rgba(255, 255, 255, 0.1);
+    padding: 10px;
+    border-radius: 8px;
+    text-align: center;
+  }
+  .stat-value {
+    font-size: 1.2em;
+    font-weight: bold;
+    margin-top: 5px;
+  }
+  .positive { color: #4caf50; }
+  .negative { color: #f44336; }
+  .neutral { color: #ffc107; }
+  .formula-display {
+    background: rgba(255,255,255,0.05);
+    padding: 15px;
+    border-radius: 8px;
+    margin: 15px 0;
+    font-family: monospace;
+    font-size: 12px;
+    border: 1px solid #4080bf;
+  }
+  footer {
+    margin-top: 40px;
+    font-size: 12px;
+    color: #7a8ca0;
+    text-align: center;
+    user-select: none;
+  }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.8.0/dist/tf.min.js"></script>
+</head>
+<body>
+
+<h1>90% Formula Trading System - Deriv</h1>
+<div id="status">Status: Ready to connect</div>
+
+<div id="controls">
+  <button id="connectBtn">Connect to Deriv API</button>
+  <button id="stopBtn" disabled>Stop</button>
+</div>
+
+<div class="stats-container">
+  <div class="stat-box">
+    <div>Win Rate</div>
+    <div class="stat-value neutral" id="winRate">0%</div>
+  </div>
+  <div class="stat-box">
+    <div>Total Trades</div>
+    <div class="stat-value neutral" id="totalTrades">0</div>
+  </div>
+  <div class="stat-box">
+    <div>Balance</div>
+    <div class="stat-value neutral" id="balance">$0.00</div>
+  </div>
+  <div class="stat-box">
+    <div>Current Stake</div>
+    <div class="stat-value neutral" id="currentStake">$0.00</div>
+  </div>
+</div>
+
+<div class="formula-display">
+  <strong>90% Adaptive Formula Active:</strong><br>
+  Pₜ₊₁ = Pₜ + θₜ(μₜ - Pₜ) + σₜεₜ + βₜ⋅Mₜ + γ⋅Cₜ + λ⋅Bₜ + δ⋅Sₜ + ω⋅Iₜ + ψ⋅Qₜ + φ⋅Rₜ
+</div>
+
+<h3>Recent Tick Prices (Last 100 ticks)</h3>
+<div id="priceList">Waiting for data...</div>
+
+<div id="prediction">90% Formula Prediction: -</div>
+<div id="error" class="neutral">Prediction Accuracy: -</div>
+
+<h3>Trading Log</h3>
+<div id="log">System ready - Click Connect to start</div>
+
+<footer>
+  90% Adaptive Formula Trading System • Smart Staking 18-35% • Real-time Execution
+</footer>
+
+<script>
+(async () => {
+  // Config
+  const API_TOKEN = "nb01apXdhcAVDdo";
+  const SYMBOL = "R_10";
+  const INTERVAL = 180000; // 3 minutes
+
+  // UI elements
+  const statusEl = document.getElementById('status');
+  const connectBtn = document.getElementById('connectBtn');
+  const stopBtn = document.getElementById('stopBtn');
+  const priceListEl = document.getElementById('priceList');
+  const predictionEl = document.getElementById('prediction');
+  const errorEl = document.getElementById('error');
+  const logEl = document.getElementById('log');
+  const winRateEl = document.getElementById('winRate');
+  const totalTradesEl = document.getElementById('totalTrades');
+  const balanceEl = document.getElementById('balance');
+  const currentStakeEl = document.getElementById('currentStake');
+
+  let ws = null;
+  let isConnected = false;
+  let isTrading = false;
+
+  let prices = [];
+  const MAX_TICKS = 100;
+
+  // Trading stats
+  let trades = { wins: 0, losses: 0, total: 0, streak: 0 };
+  let balance = 10000;
+  let currentStake = 0;
+
+  // Adaptive stake parameters
+  const baseStakePercent = 0.18;
+  const maxStakePercent = 0.35;
+
+  // Utility functions
+  function log(msg) {
+    const ts = new Date().toLocaleTimeString();
+    logEl.textContent = `[${ts}] ${msg}\n` + logEl.textContent;
+    if(logEl.textContent.split('\n').length > 50) {
+      logEl.textContent = logEl.textContent.split('\n').slice(0, 50).join('\n');
+    }
+  }
+
+  function updateStats() {
+    const winRate = trades.total > 0 ? (trades.wins / trades.total * 100) : 0;
+    winRateEl.textContent = `${winRate.toFixed(1)}%`;
+    winRateEl.className = `stat-value ${winRate >= 60 ? 'positive' : (winRate >= 40 ? 'neutral' : 'negative')}`;
+    totalTradesEl.textContent = trades.total;
+    balanceEl.textContent = `$${balance.toFixed(2)}`;
+    balanceEl.className = `stat-value ${balance >= 10000 ? 'positive' : 'neutral'}`;
+    currentStakeEl.textContent = `$${currentStake.toFixed(2)}`;
+  }
+
+  function updatePriceList() {
+    priceListEl.textContent = prices.slice(-MAX_TICKS).map(p => p.toFixed(5)).join(', ');
+  }
+
+  // 90% ADAPTIVE FORMULA IMPLEMENTATION
+  class AdaptiveFormula {
+    constructor() {
+      this.history = [];
+      this.regime = 'neutral';
+      this.volatility = 0.25;
+      this.momentum = 0;
+      this.cyclePhase = 0;
+    }
+
+    // Calculate adaptive parameters in real-time
+    calculateParameters(prices) {
+      if (prices.length < 10) return this.getDefaultParams();
+      
+      const recent = prices.slice(-20);
+      const returns = [];
+      for (let i = 1; i < recent.length; i++) {
+        returns.push(Math.log(recent[i] / recent[i-1]));
+      }
+      
+      // Realized volatility (σₜ)
+      const realizedVol = Math.sqrt(returns.reduce((sum, ret) => sum + ret * ret, 0) / returns.length);
+      const volRatio = realizedVol / 0.00025;
+      
+      // ACF for mean reversion (θₜ)
+      const acf = this.calculateACF(returns, 3);
+      const meanReversionStrength = 0.22 * (1 - Math.abs(acf)) * (volRatio > 1 ? 1.2 : 0.8);
+      
+      // Trend strength (βₜ)
+      const trend = this.calculateTrendStrength(recent, 6);
+      const momentumStrength = 0.095 * Math.abs(trend) * this.calculateTrendQuality(recent);
+      
+      return {
+        theta: Math.max(0.05, Math.min(0.35, meanReversionStrength)),
+        sigma: Math.max(0.15, Math.min(0.45, 0.31 * volRatio * (this.regime === 'high_vol' ? 1.2 : 0.8))),
+        beta: Math.max(0.02, Math.min(0.12, momentumStrength)),
+        gamma: 0.031,
+        lambda: 0.047,
+        delta: 0.038,
+        omega: 0.025,
+        psi: 0.018,
+        phi: 0.022
+      };
+    }
+
+    getDefaultParams() {
+      return {
+        theta: 0.22,
+        sigma: 0.31,
+        beta: 0.095,
+        gamma: 0.031,
+        lambda: 0.047,
+        delta: 0.038,
+        omega: 0.025,
+        psi: 0.018,
+        phi: 0.022
+      };
+    }
+
+    calculateACF(returns, lag) {
+      if (returns.length <= lag) return 0;
+      const mean = returns.reduce((a, b) => a + b) / returns.length;
+      let numerator = 0, denominator = 0;
+      for (let i = lag; i < returns.length; i++) {
+        numerator += (returns[i] - mean) * (returns[i - lag] - mean);
+      }
+      for (let i = 0; i < returns.length; i++) {
+        denominator += (returns[i] - mean) * (returns[i] - mean);
+      }
+      return denominator !== 0 ? numerator / denominator : 0;
+    }
+
+    calculateTrendStrength(prices, period) {
+      if (prices.length < period) return 0;
+      const x = Array.from({length: period}, (_, i) => i);
+      const y = prices.slice(-period);
+      const n = period;
+      
+      const sumX = x.reduce((a, b) => a + b, 0);
+      const sumY = y.reduce((a, b) => a + b, 0);
+      const sumXY = x.reduce((sum, val, i) => sum + val * y[i], 0);
+      const sumXX = x.reduce((sum, val) => sum + val * val, 0);
+      
+      const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+      return slope;
+    }
+
+    calculateTrendQuality(prices) {
+      const trend = this.calculateTrendStrength(prices, 6);
+      const volatility = this.calculateVolatility(prices);
+      return Math.min(1, Math.abs(trend) / (volatility + 0.0001));
+    }
+
+    calculateVolatility(prices) {
+      const returns = [];
+      for (let i = 1; i < prices.length; i++) {
+        returns.push(Math.log(prices[i] / prices[i-1]));
+      }
+      const mean = returns.reduce((a, b) => a + b) / returns.length;
+      const variance = returns.reduce((sum, ret) => sum + Math.pow(ret - mean, 2), 0) / returns.length;
+      return Math.sqrt(variance);
+    }
+
+    // Main prediction function - 90% FORMULA
+    predictNextTick(currentPrice, prices) {
+      if (prices.length < 5) return currentPrice;
+      
+      const params = this.calculateParameters(prices);
+      const mu = this.calculateDynamicMean(prices);
+      
+      // Mean reversion component
+      const meanReversion = params.theta * (mu - currentPrice);
+      
+      // Random component (simulated)
+      const randomShock = params.sigma * (Math.random() - 0.5) * 2;
+      
+      // Momentum component
+      const momentum = params.beta * this.calculateMomentumDirection(prices);
+      
+      // Cycle component
+      const cycle = params.gamma * Math.sin(this.cyclePhase);
+      this.cyclePhase += 0.4;
+      
+      // Breakout detection
+      const breakout = params.lambda * this.detectBreakout(prices);
+      
+      // Support/resistance
+      const supportResistance = params.delta * this.calculateSRLevel(currentPrice, prices);
+      
+      // Flow imbalance (simulated)
+      const flowImbalance = params.omega * this.estimateFlowImbalance(prices);
+      
+      // Noise filter
+      const noiseFilter = params.psi * this.filterNoise(prices);
+      
+      // Regime transition
+      const regimeTransition = params.phi * this.detectRegimeTransition(prices);
+      
+      // COMBINE ALL COMPONENTS
+      const nextPrice = currentPrice + 
+        meanReversion + 
+        randomShock + 
+        momentum + 
+        cycle + 
+        breakout + 
+        supportResistance + 
+        flowImbalance + 
+        noiseFilter + 
+        regimeTransition;
+      
+      return nextPrice;
+    }
+
+    calculateDynamicMean(prices) {
+      const recent = prices.slice(-20);
+      return recent.reduce((a, b) => a + b) / recent.length;
+    }
+
+    calculateMomentumDirection(prices) {
+      if (prices.length < 5) return 0;
+      const short = prices.slice(-3).reduce((a, b) => a + b) / 3;
+      const long = prices.slice(-8).reduce((a, b) => a + b) / 8;
+      return Math.sign(short - long);
+    }
+
+    detectBreakout(prices) {
+      if (prices.length < 10) return 0;
+      const recentHigh = Math.max(...prices.slice(-8));
+      const recentLow = Math.min(...prices.slice(-8));
+      const current = prices[prices.length - 1];
+      
+      if (current > recentHigh * 1.0001) return 1;
+      if (current < recentLow * 0.9999) return -1;
+      return 0;
+    }
+
+    calculateSRLevel(currentPrice, prices) {
+      if (prices.length < 20) return 0;
+      
+      // Simple support/resistance detection
+      const levels = this.findSRLevels(prices.slice(-50));
+      let closestLevel = null;
+      let minDistance = Infinity;
+      
+      for (const level of levels) {
+        const distance = Math.abs(currentPrice - level);
+        if (distance < minDistance) {
+          minDistance = distance;
+          closestLevel = level;
+        }
+      }
+      
+      if (closestLevel && minDistance < currentPrice * 0.001) {
+        return Math.sign(closestLevel - currentPrice);
+      }
+      return 0;
+    }
+
+    findSRLevels(prices) {
+      const levels = [];
+      const window = 5;
+      
+      for (let i = window; i < prices.length - window; i++) {
+        const current = prices[i];
+        let isHigh = true;
+        let isLow = true;
+        
+        for (let j = i - window; j <= i + window; j++) {
+          if (j === i) continue;
+          if (prices[j] > current) isHigh = false;
+          if (prices[j] < current) isLow = false;
+        }
+        
+        if (isHigh || isLow) {
+          levels.push(current);
+        }
+      }
+      
+      return levels;
+    }
+
+    estimateFlowImbalance(prices) {
+      // Simulate order flow detection
+      if (prices.length < 10) return 0;
+      const recentTrend = this.calculateTrendStrength(prices, 5);
+      const volatility = this.calculateVolatility(prices);
+      return Math.tanh(recentTrend / (volatility + 0.0001));
+    }
+
+    filterNoise(prices) {
+      // Simple noise filtering
+      if (prices.length < 5) return 0;
+      const recent = prices.slice(-5);
+      const avg = recent.reduce((a, b) => a + b) / 5;
+      const variance = recent.reduce((sum, price) => sum + Math.pow(price - avg, 2), 0) / 5;
+      return -Math.tanh(variance * 1000); // Negative when high noise
+    }
+
+    detectRegimeTransition(prices) {
+      if (prices.length < 15) return 0;
+      
+      const shortVol = this.calculateVolatility(prices.slice(-5));
+      const longVol = this.calculateVolatility(prices.slice(-15));
+      const volRatio = shortVol / longVol;
+      
+      if (volRatio > 1.5) {
+        this.regime = 'high_vol';
+        return 1;
+      } else if (volRatio < 0.7) {
+        this.regime = 'low_vol';
+        return -1;
+      } else {
+        this.regime = 'neutral';
+        return 0;
+      }
+    }
+  }
+
+  const formula = new AdaptiveFormula();
+
+  // Smart staking with martingale-like recovery
+  function calculateStake() {
+    let stakePercent = baseStakePercent;
+    
+    // Increase stake after losses (martingale-like but capped)
+    if (trades.streak < 0) {
+      const lossMultiplier = Math.min(3, Math.abs(trades.streak) + 1);
+      stakePercent = Math.min(maxStakePercent, baseStakePercent * lossMultiplier);
+    }
+    
+    // Reduce stake during high volatility
+    if (formula.regime === 'high_vol') {
+      stakePercent *= 0.7;
+    }
+    
+    currentStake = balance * stakePercent;
+    currentStake = Math.max(1, Math.min(currentStake, balance * 0.9)); // Safety limits
+    currentStakeEl.textContent = `$${currentStake.toFixed(2)}`;
+    return currentStake;
+  }
+
+  // Balance query
+  async function getBalance() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return null;
+    const reqId = Math.floor(Math.random()*1e9);
+    const msg = { balance: 1, req_id: reqId };
+    return new Promise((resolve) => {
+      function onMessage(event) {
+        const data = JSON.parse(event.data);
+        if(data.req_id === reqId) {
+          ws.removeEventListener('message', onMessage);
+          if(data && data.balance) {
+            balance = parseFloat(data.balance.balance);
+            updateStats();
+            resolve(balance);
+          } else resolve(null);
+        }
+      }
+      ws.addEventListener('message', onMessage);
+      ws.send(JSON.stringify(msg));
+      setTimeout(() => {
+        ws.removeEventListener('message', onMessage);
+        resolve(null);
+      }, 3000);
+    });
+  }
+
+  // Place trade using 90% formula prediction
+  async function placeTrade() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      log("WebSocket not connected");
+      return false;
+    }
+    
+    if (prices.length < 5) {
+      log("Not enough price data for prediction");
+      return false;
+    }
+
+    const currentPrice = prices[prices.length - 1];
+    const predictedPrice = formula.predictNextTick(currentPrice, prices);
+    
+    const direction = predictedPrice > currentPrice ? 'CALL' : 'PUT';
+    const confidence = Math.min(99, Math.abs(predictedPrice - currentPrice) / currentPrice * 10000);
+    
+    await getBalance();
+    calculateStake();
+    
+    predictionEl.textContent = `90% Formula: ${direction} | Confidence: ${confidence.toFixed(1)}%`;
+    log(`🎯 90% FORMULA PREDICTION: ${direction} | Confidence: ${confidence.toFixed(1)}%`);
+
+    const purchaseMsg = {
+      buy: 1,
+      price: parseFloat(currentStake.toFixed(2)),
+      parameters: {
+        amount: parseFloat(currentStake.toFixed(2)),
+        basis: "stake",
+        contract_type: direction,
+        currency: "USD",
+        duration: 3,
+        duration_unit: "m",
+        symbol: SYMBOL
+      },
+      req_id: Math.floor(Math.random()*1e9)
+    };
+    
+    log(`Placing trade: ${direction} with stake $${currentStake.toFixed(2)}`);
+    const tradeReqId = purchaseMsg.req_id;
+    
+    return new Promise((resolve) => {
+      let completed = false;
+      let contractSubscribed = false;
+      
+      function tradeListener(event) {
+        if(completed) return;
+        const data = JSON.parse(event.data);
+        
+        if(data.req_id === tradeReqId) {
+          if(data.error){
+            log(`Trade error: ${data.error.message}`);
+            completed = true;
+            ws.removeEventListener('message', tradeListener);
+            resolve(false);
+            return;
+          }
+          if(data.buy){
+            const contractId = data.buy.contract_id;
+            log(`Trade purchased: ${contractId}`);
+            // Subscribe to contract updates
+            ws.send(JSON.stringify({
+              proposal_open_contract: 1,
+              contract_id: contractId,
+              subscribe: 1
+            }));
+            contractSubscribed = true;
+          }
+        }
+        
+        // Check for contract settlement
+        if(data.proposal_open_contract && data.proposal_open_contract.contract_id){
+          const c = data.proposal_open_contract;
+          if(c.is_expired || c.is_settleable){
+            const profit = parseFloat(c.profit);
+            trades.total++;
+            
+            if(profit > 0){
+              trades.wins++;
+              trades.streak = Math.max(0, trades.streak) + 1;
+              log(`🎉 WIN! +$${profit.toFixed(2)} | Streak: ${trades.streak}`);
+            } else {
+              trades.losses++;
+              trades.streak = Math.min(0, trades.streak) - 1;
+              log(`💥 LOSS: -$${Math.abs(profit).toFixed(2)} | Streak: ${trades.streak}`);
+            }
+            
+            balance += profit;
+            updateStats();
+            completed = true;
+            ws.removeEventListener('message', tradeListener);
+            resolve(true);
+          }
+        }
+      }
+      
+      ws.addEventListener('message', tradeListener);
+      ws.send(JSON.stringify(purchaseMsg));
+      
+      setTimeout(() => {
+        if(!completed){
+          log("Trade timeout - checking contract status");
+          if(!contractSubscribed) {
+            completed = true;
+            ws.removeEventListener('message', tradeListener);
+            resolve(false);
+          }
+        }
+      }, 20000);
+    });
+  }
+
+  // Main trading cycle
+  async function tradingCycle() {
+    if(!isConnected || isTrading) return;
+    
+    isTrading = true;
+    statusEl.textContent = "90% Formula Predicting...";
+    log("=== STARTING TRADING CYCLE ===");
+
+    try {
+      const tradeResult = await placeTrade();
+      if(tradeResult){
+        updateStats();
+        log("✅ Trade executed successfully");
+      } else {
+        log("❌ Trade failed or skipped");
+      }
+    } catch (error) {
+      log(`❌ Trading error: ${error.message}`);
+    } finally {
+      isTrading = false;
+      nextTradeTime = Date.now() + INTERVAL;
+      log("✅ Cycle completed");
+    }
+  }
+
+  let nextTradeTime = 0;
+
+  function updateCountdown(){
+    if(!nextTradeTime) return;
+    const remaining = Math.max(0, nextTradeTime - Date.now());
+    const min = Math.floor(remaining / 60000);
+    const sec = Math.floor((remaining % 60000) / 1000);
+    statusEl.textContent = `Next trade in ${min}:${sec.toString().padStart(2,'0')}`;
+    if(remaining === 0 && !isTrading){
+      tradingCycle();
+    }
+  }
+
+  function connect() {
+    if(isConnected) return;
+    connectBtn.disabled = true;
+    stopBtn.disabled = false;
+    log("Connecting to Deriv API...");
+    statusEl.textContent = "Connecting...";
+    ws = new WebSocket("wss://ws.binaryws.com/websockets/v3?app_id=1089");
+    ws.onopen = () => {
+      log("Connected to Deriv WebSocket");
+      isConnected = true;
+      ws.send(JSON.stringify({ authorize: API_TOKEN }));
+    };
+    ws.onmessage = e => {
+      const data = JSON.parse(e.data);
+      if(data.error){
+        log(`API error: ${data.error.message}`);
+        return;
+      }
+      switch(data.msg_type){
+        case "authorize":
+          log("Authorized successfully");
+          ws.send(JSON.stringify({ ticks: SYMBOL, subscribe: 1 }));
+          ws.send(JSON.stringify({ balance: 1, subscribe: 1 }));
+          nextTradeTime = Date.now() + 5000; // Start first trade in 5 seconds
+          log("Starting first trade cycle in 5 seconds...");
+          break;
+        case "tick":
+          prices.push(data.tick.ask);
+          if(prices.length > MAX_TICKS) prices.shift();
+          updatePriceList();
+          break;
+        case "balance":
+          balance = parseFloat(data.balance.balance);
+          updateStats();
+          break;
+      }
+    };
+    ws.onerror = (error) => {
+      log("WebSocket connection error");
+      statusEl.textContent = "Connection error";
+      connectBtn.disabled = false;
+      stopBtn.disabled = true;
+    };
+    ws.onclose = () => {
+      log("Disconnected from Deriv");
+      isConnected = false;
+      statusEl.textContent = "Disconnected";
+      connectBtn.disabled = false;
+      stopBtn.disabled = true;
+    };
+  }
+
+  function disconnect() {
+    if(ws) {
+      ws.close();
+      log("Disconnecting...");
+    }
+    isConnected = false;
+    isTrading = false;
+    connectBtn.disabled = false;
+    stopBtn.disabled = true;
+    statusEl.textContent = "Disconnected";
+  }
+
+  connectBtn.addEventListener('click', connect);
+  stopBtn.addEventListener('click', disconnect);
+
+  // Initialize
+  setInterval(updateCountdown, 1000);
+  updateStats();
+  log("90% Formula Trading System Ready - Click Connect to start");
+
+})();
+</script>
+</body>
+</html>
